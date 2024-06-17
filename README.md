@@ -4,7 +4,7 @@
 The original source of this repository is as follows.<br>
 **[github] : https://github.com/sebastianGehrmann/CausalMediationAnalysis**<br>
 **[Paper]: https://arxiv.org/abs/2004.12265**
-<br><br><br>
+<br><br>
 In this repository, I have annotated it in Korean and provided the following guideline text files for each experiment.<br>
 [Attention Intervention Experiment]<br>
 : **Attention Experiment Procedure.txt**<br>
