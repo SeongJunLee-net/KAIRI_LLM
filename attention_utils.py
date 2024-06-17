@@ -16,6 +16,7 @@ def perform_intervention(intervention, model, effect_types=('indirect', 'direct'
     x_alt = intervention.base_strings_tok[1]  # E.g. The doctor asked the nurse a question. He
 
     with torch.no_grad():
+        # 각 candidate token에 대한 확률을 반환
         candidate1_base_prob, candidate2_base_prob = model.get_probabilities_for_examples_multitoken(
             x,
             intervention.candidates_tok)
@@ -45,6 +46,7 @@ def perform_intervention(intervention, model, effect_types=('indirect', 'direct'
     }
 
     for effect_type in effect_types:
+        # experiment의 attention_intervention_experiment
         candidate1_probs_head, candidate2_probs_head, candidate1_probs_layer, candidate2_probs_layer,\
             candidate1_probs_model, candidate2_probs_model = model.attention_intervention_experiment(
             intervention, effect_type)
@@ -173,6 +175,8 @@ def report_interventions_summary_by_layer(results, effect_types=('indirect', 'di
 def get_odds_ratio(intervention, model):
     x = intervention.base_strings_tok[0]
     x_alt = intervention.base_strings_tok[1]
+    # x와 x_alt는 that 뒤에 각각 stereotype과 anti_stereotype으로 바꾼 것이다.
+    # experiment.py에 해당 함수 있음
     with torch.no_grad():
         candidate1_base_prob, candidate2_base_prob = model.get_probabilities_for_examples_multitoken(
             x,

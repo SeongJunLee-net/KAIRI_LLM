@@ -24,6 +24,11 @@ def get_interventions_winogender(gpt2_version, do_filter, stat, model, tokenizer
             'num_examples_loaded': len(examples)}
     if do_filter:
         interventions = [ex.to_intervention(tokenizer, stat) for ex in examples]
+        '''
+        각 example 마다, y_{set_gender}(u)/y_{null}(u)를 구하는 과정
+        # 아마 Total_Effect가 양수인 부분을 대상으로 설정 quantile이상의 Effect를 갖는 Example을 선정해내는 과정
+        # 좀더 biased한 example을 선정하는 과정으로 보임.
+        '''
         df = DataFrame({'odds_ratio': [get_odds_ratio(intervention, model) for intervention in interventions]})
         df_expected = df[df.odds_ratio > 1]
         threshold = df_expected.odds_ratio.quantile(filter_quantile)
@@ -57,9 +62,10 @@ def intervene_attention(gpt2_version, do_filter, stat, device='cuda',
                  BertTokenizer if model.is_bert else
                  DistilBertTokenizer if model.is_distilbert else
                  RobertaTokenizer).from_pretrained(gpt2_version)
-
+    # biased한 데이터(intervention)와 설정(json_data)를 return 받음
     interventions, json_data = get_interventions_winogender(gpt2_version, do_filter, stat, model, tokenizer,
                                                             device, filter_quantile)
+    
     results = perform_interventions(interventions, model)
     json_data['mean_total_effect'] = DataFrame(results).total_effect.mean()
     json_data['mean_model_indirect_effect'] = DataFrame(results).indirect_effect_model.mean()

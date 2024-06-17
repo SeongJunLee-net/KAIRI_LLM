@@ -15,17 +15,20 @@ class AttentionOverride(nn.Module):
         """
         Args:
             attention: instance of modeling_gpt2.Attention from which variables will be
-                       copied.
+                       copied. 
+                        -> Copy된 Attention 클래스
             attn_override: values to override the computed attention weights.
                            Shape is [num_heads, seq_len, seq_len]
+                        -> 각 layer의 override할 attention map
             attn_override_mask: indicates which attention weights to override.
                                 Shape is [num_heads, seq_len, seq_len]
+                        -> 각 layer의 attention map에 override할 위치를 나타내는 mask tensor
         """
         super(AttentionOverride, self).__init__()
         # Copy values from attention
         self.output_attentions = attention.output_attentions
         self.register_buffer("bias", attention._buffers["bias"])
-        self.n_head = attention.n_head
+        self.n_head = attention.n_head # num_heads
         self.split_size = attention.split_size
         self.scale = attention.scale
         self.c_attn = attention.c_attn
@@ -37,12 +40,13 @@ class AttentionOverride(nn.Module):
         self.attn_override_mask = attn_override_mask
 
     def _attn(self, q, k, v, attention_mask=None, head_mask=None):
+        # scaled dot product attention
         w = torch.matmul(q, k)
         if self.scale:
             w = w / math.sqrt(v.size(-1))
         nd, ns = w.size(-2), w.size(-1)
         b = self.bias[:, :, ns - nd : ns, :ns]
-        w = w * b - 1e4 * (1 - b)
+        w = w * b - 1e4 * (1 - b) # False인 곳에 attention mask를 적용
 
         if attention_mask is not None:
             # Apply the attention mask
@@ -61,9 +65,9 @@ class AttentionOverride(nn.Module):
         # being overridden.
         override_seq_len = self.attn_override_mask.shape[-1]
         w[:, :, :override_seq_len, :override_seq_len] = torch.where(
-            self.attn_override_mask,
-            self.attn_override,
-            w[:, :, :override_seq_len, :override_seq_len],
+            self.attn_override_mask, # override할 위치에 
+            self.attn_override,  # True: layer 인덱스에 따른 attention map 바뀌기 전의 context에 대해서 계산한 attention
+            w[:, :, :override_seq_len, :override_seq_len], # False: 새로 계산한 attention map(즉, 바뀐 context에 대해서 계산한 attention)
         )
 
         outputs = [torch.matmul(w, v)]
@@ -77,7 +81,9 @@ class AttentionOverride(nn.Module):
         return x.view(*new_x_shape)  # in Tensorflow implem: fct merge_states
 
     def split_heads(self, x, k=False):
+        # 12개의 head로 shape을 바꾼다.
         new_x_shape = x.size()[:-1] + (self.n_head, x.size(-1) // self.n_head)
+        # (batch,seq_length,head,head_features)
         x = x.view(*new_x_shape)  # in Tensorflow implem: fct split_states
         if k:
             return x.permute(0, 2, 3, 1)  # (batch, head, head_features, seq_length)
@@ -85,7 +91,9 @@ class AttentionOverride(nn.Module):
             return x.permute(0, 2, 1, 3)  # (batch, head, seq_length, head_features)
 
     def forward(self, x, layer_past=None, attention_mask=None, head_mask=None):
+        # conv1d에 넣음으로써, 768차원을 2304차원으로 확장
         x = self.c_attn(x)
+        # 각각 768차원으로 divide
         query, key, value = x.split(self.split_size, dim=2)
         query = self.split_heads(query)
         key = self.split_heads(key, k=True)
@@ -105,7 +113,7 @@ class AttentionOverride(nn.Module):
         a = attn_outputs[0]
 
         a = self.merge_heads(a)
-        a = self.c_proj(a)
+        a = self.c_proj(a) # W_o를 이용해서 각 head로 계산한 결과를 하나로 합침
         a = self.resid_dropout(a)
 
         outputs = [a, present] + attn_outputs[1:]

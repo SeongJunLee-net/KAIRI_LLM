@@ -111,7 +111,7 @@ class Model():
                  masking_approach=1,
                  gpt2_version='gpt2'):
         super()
-
+        # string.startswith 시작 문자열이 지정된 문자열과 같은지 확인(bool)
         self.is_gpt2 = (gpt2_version.startswith('gpt2') or
                         gpt2_version.startswith('distilgpt2'))
         self.is_txl = gpt2_version.startswith('transfo-xl')
@@ -130,7 +130,8 @@ class Model():
                       DistilBertForMaskedLM if self.is_distilbert else
                       RobertaForMaskedLM).from_pretrained(
             gpt2_version,
-            output_attentions=output_attentions)
+            output_attentions=output_attentions) # output_attentions=True로 설정함으로써, Input에 대한 Attention 계산을 output에 저장하도록 설정
+        
         self.model.eval()
         self.model.to(device)
         if random_weights:
@@ -292,14 +293,17 @@ class Model():
 
         Args:
             context: Tensor of token ids in context
+            -> 앞서 등장할 문장
             candidates: list of list of token ids in each candidate
-
+            -> 이후에 올 문장에 대한 token ids의 리스트의 리스트
+        
         Returns: list containing probability for each candidate
+            -> 각 candidate에 대한 확률 리스트
         """
         # TODO: Combine into single batch
         mean_probs = []
         context = context.tolist()
-        for candidate in candidates:
+        for candidate in candidates: # candidate별로 수행
             token_log_probs = []
             if self.is_bert or self.is_distilbert or self.is_roberta:
                 mlm_inputs = self.mlm_inputs(context, candidate)
@@ -319,8 +323,10 @@ class Model():
             else:
                 combined = context + candidate
                 # Exclude last token position when predicting next token
+                # 마지막 토큰을 제외함으로써, 현재 후보인 토큰에 대한 확률만 계산한다.
                 batch = torch.tensor(combined[:-1]).unsqueeze(dim=0).to(self.device)
                 # Shape (batch_size, seq_len, vocab_size)
+                # 여기선 batch_size = 1
                 logits = self.model(batch)[0]
                 # Shape (seq_len, vocab_size)
                 log_probs = F.log_softmax(logits[-1, :, :], dim=-1)
@@ -332,6 +338,9 @@ class Model():
                     next_token_id = combined[i+1]
                     next_token_log_prob = log_probs[i][next_token_id].item()
                     token_log_probs.append(next_token_log_prob)
+            # 이후에 나올 확률을 종합(평균)한다.
+            # log를 씌웠으니 다시 exponential 취해줌
+            # 이런식으로 각 candidate tokens가 나올 확률을 종합
             mean_token_log_prob = statistics.mean(token_log_probs)
             mean_token_prob = math.exp(mean_token_log_prob)
             mean_probs.append(mean_token_prob)
@@ -452,14 +461,18 @@ class Model():
 
         Args:
             context: context text
+
             outputs: candidate outputs
+            
             attn_override_data: list of dicts of form:
                 {
                     'layer': <index of layer on which to intervene>,
                     'attention_override': <values to override the computed attention weights.
                            Shape is [batch_size, num_heads, seq_len, seq_len]>,
+                            -> 각 layer의 attention map
                     'attention_override_mask': <indicates which attention weights to override.
                                 Shape is [batch_size, num_heads, seq_len, seq_len]>
+                            -> 각 layer의 attention map에 override할 위치를 나타내는 tensor
                 }
         """
 
@@ -503,15 +516,18 @@ class Model():
                     new_probabilities.append(mean_token_prob)
             else:
                 hooks = []
-                for d in attn_override_data:
+                for d in attn_override_data: # list of dict
                     attn_override = d['attention_override']
                     attn_override_mask = d['attention_override_mask']
                     layer = d['layer']
                     hooks.append(self.attention_layer(layer).register_forward_hook(
+                        # attn_override와 attn_override_mask만 미리 채워둠
+                        # forward_hook을 건이후에 return받는 handle을 저장해둠
                         partial(intervention_hook,
                                 attn_override=attn_override,
                                 attn_override_mask=attn_override_mask)))
-
+                # 각 candidate후보들과 앞 문장을 넣어서
+                # candidate 후보에 대한 확률을 얻음
                 new_probabilities = self.get_probabilities_for_examples_multitoken(
                     context,
                     outputs)
@@ -748,7 +764,11 @@ class Model():
                 batch, target_mapping=target_mapping)[-1]
         else:
             batch = input.clone().detach().unsqueeze(0).to(self.device)
-            attention_override = self.model(batch)[-1]
+            attention_override = self.model(batch)[-1] 
+            # 각 layer의 attention map을 리턴받는다.
+            # 12 개의 attention map이 나온다.
+            
+            
 
         batch_size = 1
         seq_len = len(x)
@@ -766,7 +786,11 @@ class Model():
                 context = x
             else:
                 context = x_alt
-
+            '''
+            위에서 처음 설정한 context와 바뀐 context에 대해서 
+            attention map을 계산하여, 이를 덮어씌우는 것이
+            attention_intervention_model.py의 AttentionOverride가 하는 역할이다.
+            '''
             # Intervene at every layer and head by overlaying attention induced by x_alt
             model_attn_override_data = [] # Save layer interventions for model-level intervention later
             for layer in range(self.num_layers):
@@ -777,18 +801,26 @@ class Model():
                     layer_attention_override = attention_override[layer]
                     attention_override_mask = torch.ones_like(layer_attention_override[0], dtype=torch.uint8)
                 else:
+                    # layer인덱스에 따른 attention map을 추출
                     layer_attention_override = attention_override[layer]
+                    # attention map과 동일한 크기의 ones mask 추출
+                    # 특정 layer에 대해서 hook을 걸어줌으로써,
+                    # 바뀐 context에 대한 attention을 새로 계산해 override 한다음 candidate에 대한 확률 값을 계산한다.
                     attention_override_mask = torch.ones_like(layer_attention_override, dtype=torch.uint8)
                 layer_attn_override_data = [{
                     'layer': layer,
-                    'attention_override': layer_attention_override,
-                    'attention_override_mask': attention_override_mask
+                    'attention_override': layer_attention_override, # override할 attention map
+                    'attention_override_mask': attention_override_mask # override 할 위치를 나타냄
                 }]
+                
+                # return값으로 각 candidate에대한 확률값을 리턴받음
                 candidate1_probs_layer[layer], candidate2_probs_layer[layer] = self.attention_intervention(
-                    context=context,
-                    outputs=intervention.candidates_tok,
+                    context=context, # x or x_alt
+                    outputs=intervention.candidates_tok, # candidates_tok에는 문장의 나머지 부분의 후보 토큰 ids가 담겨져있음
                     attn_override_data = layer_attn_override_data)
+                # 각 layer의 attention override의 정보를 저장해둠
                 model_attn_override_data.extend(layer_attn_override_data)
+                # gpt2의 경우 12개의 head에 대해서 수행
                 for head in range(self.num_heads):
                     if self.is_bert or self.is_distilbert or self.is_roberta:
                         attention_override_mask = [torch.zeros_like(l, dtype=torch.uint8)
@@ -798,6 +830,9 @@ class Model():
                         attention_override_mask = torch.zeros_like(layer_attention_override[0], dtype=torch.uint8)
                         attention_override_mask[0][head] = 1
                     else:
+                        # 어떤 한 Head만 1을 씌우고, 나머지 head는 0으로 intervention한다.
+                        # 이말은, 한 Head만 context가 바뀌기 전에 계산한 attention map을 사용하고
+                        # 나머지 Head는 context가 바뀌고 나서 계산한 attention map을 사용한다.
                         attention_override_mask = torch.zeros_like(layer_attention_override, dtype=torch.uint8)
                         attention_override_mask[0][head] = 1 # Set mask to 1 for single head only
                     head_attn_override_data = [{
@@ -805,12 +840,15 @@ class Model():
                         'attention_override': layer_attention_override,
                         'attention_override_mask': attention_override_mask
                     }]
+                    # 리턴 값으로 각 head를 intervention 했을때의 candidate에 대한 확률 값을 리턴받음
                     candidate1_probs_head[layer][head], candidate2_probs_head[layer][head] = self.attention_intervention(
                         context=context,
                         outputs=intervention.candidates_tok,
                         attn_override_data=head_attn_override_data)
 
             # Intervene on entire model by overlaying attention induced by x_alt
+            # 전체 layer에 대해서 hook을 걸어줌으로써
+            # 바뀐 context를 바뀌기 전에 attention map으로 계산한 확률값을 리턴 받는다.
             candidate1_probs_model, candidate2_probs_model = self.attention_intervention(
                 context=context,
                 outputs=intervention.candidates_tok,

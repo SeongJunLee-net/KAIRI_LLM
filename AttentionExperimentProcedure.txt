@@ -1,0 +1,17 @@
+# 핵심은 from_pretrained의 output_attentions 파라미터를 True로 설정하면서
+# Input을 넣었을 때 계산되는 Attention을 시각화할 수 있는 것이다.(i.e. outputs.attentions를 사용)
+# attention experiment는 원래 context의 alternative에 해당하는 context를 입력으로 넣음으로써 생기는 attention을 
+# 각 layer 별, head별, model 별로 교체해보면서, context뒤에 올 수 있는 candidate에 대한 확률을 추출한다.
+
+
+1. attention_intervention_winogender.py에서 시작
+2. results = perform_interventions(interventions, model) 수행
+   -> 'attention_utils.py'
+3. 각 effect type 별로  candidate1_probs_head, candidate2_probs_head, candidate1_probs_layer, candidate2_probs_layer,\
+   candidate1_probs_model, candidate2_probs_model = model.attention_intervention_experiment(
+   intervention, effect_type) 수행
+   -> 'experiment.py'
+4. attention_intervention_experiment 수행 
+4.1.1. attention_intervention 수행
+4.1.2. attention_intervention 내의 intervention_hook에서 Override 클래스 확인-> 'attention_intervention_model.py'
+4.2. 각 layer 별, head별, model 별로 attention을 교체하면서 candidate 확률값을 추출해서 3.에 return 됨
